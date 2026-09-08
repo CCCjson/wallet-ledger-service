@@ -7,13 +7,17 @@ actually needs testing.
 
 from datetime import date
 
-from app.models import SearchFilter
+import pytest
+from pydantic import ValidationError
+
+from app.models import MAX_MINOR_UNITS, SearchFilter
 from app.search import (
     RELATIVE_PERIODS,
     build_filter_json_schema,
     build_prompt,
     filter_to_sql,
     resolve_period,
+    to_minor_units,
 )
 from tests.helpers import event_body, post_event, sign
 
@@ -175,6 +179,44 @@ def test_every_declared_period_resolves():
         assert start <= end
 
 
+# --- Amount conversion -------------------------------------------------------
+# The model no longer multiplies; it names the figure the user said and Python
+# converts it. Same reasoning as the date labels above.
+
+
+def test_four_figure_amounts_keep_their_factor_of_100():
+    """The bug this replaced: asked to convert, the model returned 5000 for
+    "over $5,000" - a filter for $50, a hundred times too wide."""
+    assert to_minor_units(50) == 5000
+    assert to_minor_units(5000) == 500_000
+
+
+def test_fractional_amounts_do_not_pick_up_float_error():
+    assert to_minor_units(12.5) == 1250
+    assert to_minor_units(0.29) == 29  # 0.29 * 100 is 28.999999999999996 in float
+
+
+def test_absent_amount_stays_absent():
+    assert to_minor_units(None) is None
+
+
+# --- Amount bounds -----------------------------------------------------------
+
+
+def test_filter_amount_beyond_int64_is_rejected_not_passed_to_the_driver():
+    """An unbounded filter amount reached asyncpg, which raised at bind time and
+    turned an unauthenticated GET into a 500. It now fails validation inside
+    parse_query, which degrades to "not understood" and returns everything."""
+    with pytest.raises(ValidationError):
+        SearchFilter(min_amount=MAX_MINOR_UNITS + 1)
+    with pytest.raises(ValidationError):
+        SearchFilter(max_amount=to_minor_units(99_999_999_999_999_999_999))
+
+
+def test_filter_amount_at_the_ceiling_is_accepted():
+    assert SearchFilter(min_amount=MAX_MINOR_UNITS).min_amount == MAX_MINOR_UNITS
+
+
 # --- Prompt construction -----------------------------------------------------
 
 
@@ -188,6 +230,13 @@ def test_schema_requires_every_property_for_strict_mode():
     schema = build_filter_json_schema(["USD"])
     assert set(schema["required"]) == set(schema["properties"])
     assert schema["additionalProperties"] is False
+
+
+def test_schema_asks_the_model_for_main_units_not_minor_ones():
+    """The model is never offered a field it would have to multiply into."""
+    schema = build_filter_json_schema(["USD"])
+    assert "min_amount_major" in schema["properties"]
+    assert "min_amount" not in schema["properties"]
 
 
 # --- Query length ------------------------------------------------------------

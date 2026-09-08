@@ -145,7 +145,7 @@ should be able to tell them apart.
 The model translates English into a filter. **It never generates SQL.**
 
 ```
-"payments over $50"  ──►  {"tx_type": "payment", "min_amount": 5000, …}  ──►  WHERE type = $2 AND amount >= $3
+"payments over $50"  ──►  {"tx_type": "payment", "min_amount_major": 50, …}  ──►  WHERE type = $2 AND amount >= $3
 ```
 
 The LLM's entire output is a `SearchFilter` object, constrained by OpenAI's
@@ -160,15 +160,23 @@ user's rows. A model that fills in seven optional fields fails in exactly one
 way: a wrong field value. That is recoverable, and it is testable without
 calling the model at all, which is what `tests/test_search.py` does.
 
-**The model does no arithmetic either.** It does not compute dates; it names a
-window — `last_7_days`, `last_month`, `last_calendar_week` — and Python resolves
-the label into a range. This is the same principle as not letting it write SQL,
-applied one level down, and it was not theoretical: prompted with "the 7 days
-ending today", the model kept resolving *"last week"* to a window that ended
-yesterday, quietly dropping today's transactions from the result. Date
-arithmetic is deterministic and belongs in code, where `resolve_period` is
-eleven plain assertions in the test suite. `date_from` / `date_to` survive only
-for dates the user spelled out literally.
+**The model does no arithmetic either. It computes nothing; it names things.**
+This is the same principle as not letting it write SQL, applied one level down,
+and it applies to both of the numbers in this filter.
+
+For dates it names a window — `last_7_days`, `last_month`, `last_calendar_week`
+— and `resolve_period` turns the label into a range. For money it writes down
+the figure the user said, in the currency's main unit, and `to_minor_units`
+multiplies it out.
+
+Neither was theoretical. Prompted with "the 7 days ending today", the model kept
+resolving *"last week"* to a window that ended yesterday, quietly dropping
+today's transactions. Asked to convert amounts to minor units itself, it kept
+dropping the factor of 100 on larger figures — *"payments over $5,000"* came
+back as `5000`, a filter for **$50**, a hundred times too wide and completely
+plausible on screen. Both conversions are deterministic and belong in code,
+where between them they are a dozen plain assertions in the test suite.
+`date_from` / `date_to` survive only for dates the user spelled out literally.
 
 The currency enum is built per request from **the balances the user actually
 holds**, not from a hard-coded list. The webhook records any currency the
@@ -195,14 +203,26 @@ layers:
 3. Not understood → the API returns **every transaction** with
    `query_understood: false`, and the page shows a banner:
    *"Couldn't understand 'qwerty nonsense' — showing all transactions instead."*
+4. And if the request itself fails — the API is down, the network drops, an
+   edge proxy rejects it — the page keeps the balances and the previous list on
+   screen and explains itself: *"Search failed — showing your previous
+   results."* Only a failure with nothing on screen yet is a whole-page error.
 
 Typing gibberish shows you your history with an explanation, never an error
 page and never a blank one. Every exception in the search path is caught; the
 worst outcome is an unfiltered list.
 
-Related: a search filters the **transaction list only**. Balances always show
-every currency in full, because a search should never change what you are
-worth.
+Related, and the reason layer 4 exists: a search filters the **transaction list
+only**. Balances always show every currency in full, because a search should
+never change what you are worth — and that has to hold when the search fails,
+not just when it succeeds.
+
+One caveat that is honestly outside the application: Render's edge rejects a
+query string containing something that looks like SQL injection (`'; DROP TABLE
+transactions; --`) with a 403 before it ever reaches this service. The request
+never arrives, so the "not understood" path cannot run; layer 4 catches it
+instead, and the page keeps working. Locally, where nothing sits in front of the
+app, the same query goes through the model and lands on layer 2 as intended.
 
 ---
 
@@ -250,8 +270,19 @@ returned 500 where they should have returned 4xx:
   permanently invalid event would have been resent forever — the exact retry
   storm the idempotency work exists to absorb.
 
-Both were 401/422 questions being answered with a 500, which is the difference
-between "your request is wrong" and "we are broken". Each has a regression test.
+- **A filter amount above `int64` crashed the search endpoint.** The same
+  ceiling, one layer over: `PaymentEvent.amount` was bounded but `SearchFilter`
+  was not, so *"payments over $99999999999999999999"* produced an integer too
+  large for `BIGINT` and asyncpg raised at bind time. A single unauthenticated
+  `GET` returned 500. It is now bounded at the same `MAX_MINOR_UNITS`, which
+  makes it fail validation inside `parse_query` and fall through the existing
+  "not understood" path — the full list, with an explanation, like any other
+  query the filter cannot express.
+
+The first two were 401/422 questions being answered with a 500, the third a
+question that already had a graceful answer available and was not using it —
+in every case the difference between "your request is wrong" and "we are
+broken". Each has a regression test.
 
 The same pass also confirmed what already held: signature verification runs on
 raw bytes, so a JSON body with shuffled keys and extra whitespace still

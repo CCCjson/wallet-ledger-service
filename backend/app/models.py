@@ -59,11 +59,19 @@ class SearchFilter(BaseModel):
 
     It also never does arithmetic. Relative windows arrive as a ``period``
     label and are turned into dates by Python; ``date_from`` / ``date_to`` are
-    reserved for dates the user stated literally.
+    reserved for dates the user stated literally. Amounts arrive in the
+    currency's main unit and are multiplied out by ``search.to_minor_units``,
+    so by the time they land here they are already minor units.
+
+    The amount bounds are the same ``BIGINT`` ceiling ``PaymentEvent`` uses.
+    Without them a query naming an absurd figure produced an ``int`` too large
+    for the column, asyncpg raised at bind time, and an unauthenticated GET
+    answered 500. Bounding here routes it into the existing "not understood"
+    fallback instead, which returns the full list.
     """
 
-    min_amount: int | None = None  # minor units
-    max_amount: int | None = None
+    min_amount: int | None = Field(default=None, ge=0, le=MAX_MINOR_UNITS)
+    max_amount: int | None = Field(default=None, ge=0, le=MAX_MINOR_UNITS)
     currency: str | None = None
     tx_type: Literal["top_up", "payment"] | None = None
     period: RelativePeriod | None = None

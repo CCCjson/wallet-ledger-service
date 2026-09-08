@@ -7,17 +7,23 @@ is an injection surface, is impossible to test, and fails in ways you cannot
 bound. A model that emits a constrained JSON object fails in exactly one way -
 it fills in the wrong field - and that is recoverable.
 
-The same principle applies to dates. The model does not compute them. It picks
-a *label* - ``last_7_days``, ``last_month`` - and Python turns that label into
-a range. Date arithmetic is deterministic and testable; asking a language model
-to do it is neither, and it was quietly getting the answer wrong: prompted with
-"the 7 days ending today" it kept resolving "last week" to the previous
-calendar week and dropping today's transactions from the result.
+The same principle applies to arithmetic: **the model does not compute, it
+names.** For dates it picks a *label* - ``last_7_days``, ``last_month`` - and
+``resolve_period`` turns that label into a range. For money it writes down the
+figure the user said and ``to_minor_units`` multiplies it out.
+
+Neither was theoretical. Prompted with "the 7 days ending today" the model kept
+resolving "last week" to the previous calendar week, dropping today's
+transactions. Asked to convert amounts to minor units it kept dropping the
+factor of 100 on larger figures - "payments over $5,000" came back as a filter
+for $50. Both are deterministic and belong in code, where they are a handful of
+plain assertions in the test suite.
 """
 
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import get_args
 
 from app.config import OPENAI_API_KEY, OPENAI_MODEL, TRANSACTION_TYPES
@@ -42,13 +48,16 @@ def build_filter_json_schema(currencies: list[str]) -> dict:
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "min_amount": {
-                "type": ["integer", "null"],
-                "description": "Minimum amount in minor units, inclusive.",
+            "min_amount_major": {
+                "type": ["number", "null"],
+                "description": (
+                    "Minimum amount, inclusive, in the currency's main unit - "
+                    "the figure the user said, not multiplied by anything."
+                ),
             },
-            "max_amount": {
-                "type": ["integer", "null"],
-                "description": "Maximum amount in minor units, inclusive.",
+            "max_amount_major": {
+                "type": ["number", "null"],
+                "description": "As min_amount_major, inclusive.",
             },
             "currency": {
                 "type": ["string", "null"],
@@ -83,8 +92,8 @@ def build_filter_json_schema(currencies: list[str]) -> dict:
             },
         },
         "required": [
-            "min_amount",
-            "max_amount",
+            "min_amount_major",
+            "max_amount_major",
             "currency",
             "tx_type",
             "period",
@@ -107,8 +116,12 @@ Sunday week. Use date_from / date_to only for a date the user spelled out
 ("since 1 March", "between 2025-01-01 and 2025-01-31"), and leave them null
 whenever period is set.
 
-Amounts are integers in MINOR UNITS: 2500 means $25.00, 100 means $1.00.
-So "payments over $50" is min_amount 5000, and "under 10 euros" is max_amount 1000.
+Never multiply an amount. Write down the figure the user said, in the currency's
+main unit, and nothing else:
+  "payments over $50"  -> min_amount_major 50
+  "over $5,000"        -> min_amount_major 5000
+  "under 10 euros"     -> max_amount_major 10
+  "over $12.50"        -> min_amount_major 12.5
 
 Currencies held by this user: {", ".join(currencies)}. Map "dollars"/"$" to USD
 and "euros"/"EUR"/"€" to EUR. Leave currency null if the user did not say one,
@@ -156,6 +169,24 @@ def resolve_period(period: str, today: date) -> tuple[date, date]:
     raise ValueError(f"unknown period {period!r}")  # unreachable: Literal-validated
 
 
+def to_minor_units(major: float | int | None) -> int | None:
+    """Main unit (what the user says, "$50") to minor units (what the ledger
+    stores, 5000).
+
+    The same principle as ``resolve_period``, applied to money: the model names
+    an amount, it does not multiply one. Asked to do the multiplication it was
+    getting it wrong on larger figures - "payments over $5,000" came back as
+    ``5000`` often enough to matter, which is $50, a filter a hundred times too
+    wide that looks perfectly plausible on screen.
+
+    ``Decimal`` rather than float so that $0.29 lands on 29 rather than on
+    28.999999999999996.
+    """
+    if major is None:
+        return None
+    return round(Decimal(str(major)) * 100)
+
+
 def _empty_filter(understood: bool = True) -> SearchFilter:
     return SearchFilter(understood=understood)
 
@@ -200,6 +231,11 @@ async def parse_query(
             },
         )
         payload = json.loads(response.choices[0].message.content or "{}")
+        # The multiplication the model is not allowed to do. Inside the try, so
+        # an amount too large for BIGINT fails validation below and degrades to
+        # "not understood" rather than reaching the driver.
+        payload["min_amount"] = to_minor_units(payload.pop("min_amount_major", None))
+        payload["max_amount"] = to_minor_units(payload.pop("max_amount_major", None))
         parsed = SearchFilter.model_validate(payload)
     except Exception:  # noqa: BLE001 - search must never take down the page
         log.exception("query parsing failed for %r; falling back to all rows", query)

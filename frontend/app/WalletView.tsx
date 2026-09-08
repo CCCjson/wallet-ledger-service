@@ -64,10 +64,18 @@ export default function WalletView({ userId }: { userId: string }) {
   // a search narrows the history without changing what the user is worth.
   const balances = wallet?.balances ?? [];
 
+  // A request that fails when there is already a wallet on screen is a failed
+  // *search*. The balances and the previous list are still true, so the page
+  // keeps showing them and explains what happened; wiping them would be the
+  // search changing what the user is worth, which is the one thing it must
+  // never do. Only a failure with nothing on screen is a whole-page failure.
+  const hardError = error !== null && wallet === null;
+  const softError = error !== null && wallet !== null;
+
   return (
     <>
       <h2>Balances</h2>
-      {error ? (
+      {hardError ? (
         <div className="state error">Balances unavailable.</div>
       ) : loading && !wallet ? (
         <div className="state">Loading balances…</div>
@@ -100,14 +108,20 @@ export default function WalletView({ userId }: { userId: string }) {
         Try “payments over $50”, “anything from last week”, or “top ups in euros”.
       </p>
 
-      {wallet && !wallet.query_understood && debounced.trim() && (
+      {softError && (
+        <p className="banner">
+          Search failed — showing your previous results.
+        </p>
+      )}
+
+      {!softError && wallet && !wallet.query_understood && debounced.trim() && (
         <p className="banner">
           Couldn’t understand “{debounced.trim()}” — showing all transactions instead.
         </p>
       )}
 
       <div style={{ marginTop: 16 }}>
-        {error ? (
+        {hardError ? (
           <div className="state error">
             Couldn’t load this wallet: {error}
           </div>
