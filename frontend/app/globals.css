@@ -1,0 +1,87 @@
+:root {
+  --bg: #ffffff;
+  --fg: #16181d;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --panel: #f9fafb;
+  --accent: #1f6feb;
+  --warn-bg: #fff8e6;
+  --warn-border: #f0d18a;
+  --in: #16794c;
+  --out: #b42318;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115;
+    --fg: #e6e8eb;
+    --muted: #9aa1ac;
+    --border: #262b33;
+    --panel: #161a21;
+    --accent: #58a6ff;
+    --warn-bg: #2a2415;
+    --warn-border: #5c4d1f;
+    --in: #4ade80;
+    --out: #f87171;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+main { max-width: 760px; margin: 0 auto; padding: 40px 20px 80px; }
+
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+     color: var(--muted); margin: 32px 0 12px; font-weight: 600; }
+
+.subtitle { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+
+.balances { display: flex; flex-wrap: wrap; gap: 12px; }
+.balance {
+  flex: 1 1 160px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+}
+.balance .currency { font-size: 12px; color: var(--muted); letter-spacing: .05em; }
+.balance .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+input[type="search"] {
+  width: 100%; padding: 10px 12px; font-size: 15px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--fg);
+}
+input[type="search"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+
+.banner {
+  margin: 12px 0 0; padding: 10px 12px; font-size: 14px;
+  background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 8px;
+}
+
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; font-size: 12px; color: var(--muted); font-weight: 600;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 14px; }
+td.amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+td.amount.in { color: var(--in); }
+td.amount.out { color: var(--out); }
+
+.tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 12px; background: var(--panel); border: 1px solid var(--border);
+}
+
+.state {
+  padding: 32px 16px; text-align: center; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 8px;
+}
+.state.error { color: var(--out); border-color: var(--out); }

@@ -1,0 +1,28 @@
+databases:
+  - name: daely-wallet-db
+    plan: free
+    databaseName: daely
+    user: daely
+
+services:
+  - type: web
+    name: daely-wallet-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: daely-wallet-db
+          property: connectionString
+      - key: WEBHOOK_SECRET
+        sync: false          # set in the Render dashboard, never in git
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false          # set to the deployed frontend origin
+      - key: PYTHON_VERSION
+        value: "3.13.4"
