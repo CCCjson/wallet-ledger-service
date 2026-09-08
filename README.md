@@ -217,11 +217,18 @@ Check the balance moved:
 curl -s "https://daely-wallet.onrender.com/wallets/u_123" | python3 -m json.tool
 ```
 
-**Send the same event ten times, concurrently:**
+Sending `evt_demo_1` a second time returns `{"status":"duplicate"}` and the
+balance does not move again.
+
+**Send one event ten times, concurrently.** This uses a fresh `event_id` each
+run, so you can repeat it as often as you like:
 
 ```bash
+RACE_BODY="{\"event_id\":\"evt_race_$(date +%s)\",\"user_id\":\"u_123\",\"amount\":2500,\"currency\":\"USD\",\"type\":\"top_up\"}"
+RACE_SIG=$(printf '%s' "$RACE_BODY" | openssl dgst -sha256 -hmac "whsec_test_secret" | awk '{print $2}')
+
 seq 1 10 | xargs -P 10 -I{} curl -s -X POST https://daely-wallet.onrender.com/webhooks/payment \
-  -H "Content-Type: application/json" -H "X-Signature: sha256=$SIG" -d "$BODY"
+  -H "Content-Type: application/json" -H "X-Signature: sha256=$RACE_SIG" -d "$RACE_BODY"
 ```
 
 One response says `"ok"`, nine say `"duplicate"`, and the balance moves by
