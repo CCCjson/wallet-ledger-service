@@ -414,3 +414,6 @@ nine `duplicate`, one ledger row, and one balance movement.
   ingestion is idempotent, replaying a provider's history is safe by
   construction — it is worth exposing that deliberately rather than leaving it
   as a property nobody knows they have.
+- **Signature hex casing.** Signature hex is matched case-sensitively
+  (lowercase), which matches Stripe/GitHub convention. A provider emitting
+  uppercase would need an explicit normalisation step.
