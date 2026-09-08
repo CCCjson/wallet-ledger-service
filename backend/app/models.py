@@ -5,6 +5,26 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+# transactions.amount is BIGINT. Anything above this is not a large payment,
+# it is a malformed event: the driver would raise OverflowError at bind time
+# and the endpoint would answer 500, which tells the provider to retry an
+# event that can never succeed. Bounding it here turns that into a 422 the
+# provider will stop resending.
+MAX_MINOR_UNITS = 9_223_372_036_854_775_807  # 2**63 - 1
+
+# Relative windows the search model may ask for by name. It never computes a
+# date itself; Python resolves these against "today". See search.resolve_period.
+RelativePeriod = Literal[
+    "today",
+    "yesterday",
+    "last_7_days",
+    "last_30_days",
+    "last_calendar_week",
+    "this_month",
+    "last_month",
+    "this_year",
+]
+
 
 class PaymentEvent(BaseModel):
     """A webhook event from the payment provider.
@@ -15,7 +35,7 @@ class PaymentEvent(BaseModel):
 
     event_id: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
-    amount: int = Field(gt=0)  # minor units: 2500 == $25.00
+    amount: int = Field(gt=0, le=MAX_MINOR_UNITS)  # minor units: 2500 == $25.00
     currency: str = Field(min_length=3, max_length=3)
     type: Literal["top_up", "payment"]
 
@@ -36,12 +56,17 @@ class SearchFilter(BaseModel):
 
     The model never writes SQL. It fills in this object, Pydantic validates it,
     and we build a parameterised query from the validated fields.
+
+    It also never does arithmetic. Relative windows arrive as a ``period``
+    label and are turned into dates by Python; ``date_from`` / ``date_to`` are
+    reserved for dates the user stated literally.
     """
 
     min_amount: int | None = None  # minor units
     max_amount: int | None = None
     currency: str | None = None
     tx_type: Literal["top_up", "payment"] | None = None
+    period: RelativePeriod | None = None
     date_from: date | None = None
     date_to: date | None = None  # inclusive
     understood: bool = True

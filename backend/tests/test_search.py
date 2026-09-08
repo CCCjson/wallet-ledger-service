@@ -8,7 +8,13 @@ actually needs testing.
 from datetime import date
 
 from app.models import SearchFilter
-from app.search import filter_to_sql
+from app.search import (
+    RELATIVE_PERIODS,
+    build_filter_json_schema,
+    build_prompt,
+    filter_to_sql,
+    resolve_period,
+)
 from tests.helpers import event_body, post_event, sign
 
 
@@ -93,3 +99,108 @@ async def test_transactions_are_newest_first(client, pool):
     r = await client.get("/wallets/u_123")
     ids = [t["id"] for t in r.json()["transactions"]]
     assert ids == sorted(ids)  # id 1 is the most recent after the shuffle above
+
+
+# --- Date resolution ---------------------------------------------------------
+# The model no longer computes dates; it names a window and Python resolves it.
+# That arithmetic is deterministic, so it can simply be tested.
+
+
+def test_last_7_days_includes_today():
+    """The bug this replaced: the model resolved "last week" to the previous
+    calendar week and silently dropped today's transactions."""
+    assert resolve_period("last_7_days", date(2026, 9, 8)) == (
+        date(2026, 9, 2),
+        date(2026, 9, 8),
+    )
+
+
+def test_today_and_yesterday_are_single_days():
+    assert resolve_period("today", date(2026, 9, 8)) == (date(2026, 9, 8),) * 2
+    assert resolve_period("yesterday", date(2026, 9, 8)) == (date(2026, 9, 7),) * 2
+
+
+def test_last_calendar_week_is_monday_to_sunday():
+    # 2026-09-08 is a Tuesday, so its week began Mon the 7th and the week
+    # before that runs Mon 31 Aug to Sun 6 Sep.
+    assert resolve_period("last_calendar_week", date(2026, 9, 8)) == (
+        date(2026, 8, 31),
+        date(2026, 9, 6),
+    )
+
+
+def test_last_calendar_week_from_a_monday_looks_back_a_full_week():
+    assert resolve_period("last_calendar_week", date(2026, 9, 7)) == (
+        date(2026, 8, 31),
+        date(2026, 9, 6),
+    )
+
+
+def test_this_month_runs_from_the_first_to_today():
+    assert resolve_period("this_month", date(2026, 9, 8)) == (
+        date(2026, 9, 1),
+        date(2026, 9, 8),
+    )
+
+
+def test_last_month_crosses_a_year_boundary():
+    assert resolve_period("last_month", date(2026, 1, 15)) == (
+        date(2025, 12, 1),
+        date(2025, 12, 31),
+    )
+
+
+def test_last_month_from_a_short_month():
+    assert resolve_period("last_month", date(2026, 3, 1)) == (
+        date(2026, 2, 1),
+        date(2026, 2, 28),
+    )
+
+
+def test_last_30_days_and_this_year():
+    assert resolve_period("last_30_days", date(2026, 9, 8)) == (
+        date(2026, 8, 10),
+        date(2026, 9, 8),
+    )
+    assert resolve_period("this_year", date(2026, 9, 8)) == (
+        date(2026, 1, 1),
+        date(2026, 9, 8),
+    )
+
+
+def test_every_declared_period_resolves():
+    """No label can be offered to the model that Python cannot resolve."""
+    for period in RELATIVE_PERIODS:
+        start, end = resolve_period(period, date(2026, 9, 8))
+        assert start <= end
+
+
+# --- Prompt construction -----------------------------------------------------
+
+
+def test_currency_enum_comes_from_what_the_user_holds():
+    schema = build_filter_json_schema(["GBP", "USD"])
+    assert schema["properties"]["currency"]["enum"] == ["GBP", "USD", None]
+    assert "GBP" in build_prompt(["GBP", "USD"])
+
+
+def test_schema_requires_every_property_for_strict_mode():
+    schema = build_filter_json_schema(["USD"])
+    assert set(schema["required"]) == set(schema["properties"])
+    assert schema["additionalProperties"] is False
+
+
+# --- Query length ------------------------------------------------------------
+
+
+async def test_overlong_query_is_rejected_before_it_reaches_the_model(client):
+    r = await client.get("/wallets/u_123", params={"q": "a" * 201})
+    assert r.status_code == 422
+
+
+async def test_query_at_the_limit_is_accepted(client):
+    """No API key is configured in tests, so this falls through to "everything",
+    which is exactly the degradation the endpoint promises."""
+    r = await client.get("/wallets/u_123", params={"q": "a" * 200})
+    assert r.status_code == 200
+    assert r.json()["query_understood"] is False

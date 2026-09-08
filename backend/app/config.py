@@ -48,7 +48,14 @@ CORS_ORIGINS = [
     if origin.strip()
 ]
 
-# Currencies and transaction types the system knows about. Fed to the search
-# prompt as an enum so the model has less room to hallucinate.
-SUPPORTED_CURRENCIES = ["USD", "EUR"]
+# Transaction types the system knows about. Fed to the search prompt as an enum
+# so the model has less room to hallucinate.
+#
+# Currencies are deliberately NOT a whitelist here. The webhook records whatever
+# the provider signed - a signed event is a fact about money that moved, and the
+# ledger's job is to record it, not to have opinions about it. The search prompt
+# therefore takes its currency enum from what the user actually holds
+# (the balances it already loaded), so the two ends cannot drift apart. This is
+# only the fallback for a user with no history yet.
+DEFAULT_CURRENCIES = ["USD", "EUR"]
 TRANSACTION_TYPES = ["top_up", "payment"]

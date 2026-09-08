@@ -3,12 +3,12 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from app import repository
-from app.config import CORS_ORIGINS, SEED_ON_STARTUP
+from app.config import CORS_ORIGINS, DEFAULT_CURRENCIES, SEED_ON_STARTUP
 from app.db import create_pool, init_db
 from app.models import PaymentEvent, WalletResponse
 from app.search import parse_query
@@ -73,15 +73,32 @@ async def receive_payment(
     return {"status": status, "event_id": event.event_id}
 
 
+# A search query is a prompt we pay for and wait on. 200 characters is more
+# than any real question needs, and without a bound the endpoint is both a cost
+# amplifier and a denial-of-service surface: an unauthenticated GET would
+# forward an arbitrarily large string straight to the model.
+MAX_QUERY_LENGTH = 200
+
+
 @app.get("/wallets/{user_id}", response_model=WalletResponse)
-async def get_wallet(request: Request, user_id: str, q: str | None = None) -> WalletResponse:
+async def get_wallet(
+    request: Request,
+    user_id: str,
+    q: str | None = Query(default=None, max_length=MAX_QUERY_LENGTH),
+) -> WalletResponse:
     pool = request.app.state.pool
 
-    search = await parse_query(q) if q else None
+    # Balances are loaded first because the search prompt's currency enum is
+    # built from them: the model is only ever offered currencies this user
+    # actually holds, and no hard-coded list can drift out of step with the
+    # ledger.
+    balances = await repository.get_balances(pool, user_id)
+    currencies = [b.currency for b in balances] or DEFAULT_CURRENCIES
+
+    search = await parse_query(q, currencies) if q else None
     # An unparseable query still returns every transaction rather than an error.
     query_understood = True if search is None else search.understood
 
-    balances = await repository.get_balances(pool, user_id)
     transactions = await repository.list_transactions(pool, user_id, search)
 
     # Balances always show every currency in full. A search narrows the

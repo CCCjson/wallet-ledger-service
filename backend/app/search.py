@@ -6,85 +6,113 @@ build a parameterised query from the validated fields. A model that emits SQL
 is an injection surface, is impossible to test, and fails in ways you cannot
 bound. A model that emits a constrained JSON object fails in exactly one way -
 it fills in the wrong field - and that is recoverable.
+
+The same principle applies to dates. The model does not compute them. It picks
+a *label* - ``last_7_days``, ``last_month`` - and Python turns that label into
+a range. Date arithmetic is deterministic and testable; asking a language model
+to do it is neither, and it was quietly getting the answer wrong: prompted with
+"the 7 days ending today" it kept resolving "last week" to the previous
+calendar week and dropping today's transactions from the result.
 """
 
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
+from typing import get_args
 
-from app.config import (
-    OPENAI_API_KEY,
-    OPENAI_MODEL,
-    SUPPORTED_CURRENCIES,
-    TRANSACTION_TYPES,
-)
-from app.models import SearchFilter
+from app.config import OPENAI_API_KEY, OPENAI_MODEL, TRANSACTION_TYPES
+from app.models import RelativePeriod, SearchFilter
 
 log = logging.getLogger(__name__)
 
 LLM_TIMEOUT_SECONDS = 8.0
 
-# Hand-written rather than generated from the model so that "additionalProperties
-# false" and the required-everything rule that OpenAI strict mode demands are
-# explicit and easy to read.
-FILTER_JSON_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "min_amount": {
-            "type": ["integer", "null"],
-            "description": "Minimum amount in minor units, inclusive.",
-        },
-        "max_amount": {
-            "type": ["integer", "null"],
-            "description": "Maximum amount in minor units, inclusive.",
-        },
-        "currency": {
-            "type": ["string", "null"],
-            "enum": SUPPORTED_CURRENCIES + [None],
-        },
-        "tx_type": {
-            "type": ["string", "null"],
-            "enum": TRANSACTION_TYPES + [None],
-        },
-        "date_from": {
-            "type": ["string", "null"],
-            "description": "Earliest date, inclusive, as YYYY-MM-DD.",
-        },
-        "date_to": {
-            "type": ["string", "null"],
-            "description": "Latest date, inclusive, as YYYY-MM-DD.",
-        },
-        "understood": {
-            "type": "boolean",
-            "description": "False if the query is not a transaction filter at all.",
-        },
-    },
-    "required": [
-        "min_amount",
-        "max_amount",
-        "currency",
-        "tx_type",
-        "date_from",
-        "date_to",
-        "understood",
-    ],
-}
+RELATIVE_PERIODS: list[str] = list(get_args(RelativePeriod))
 
 
-def build_prompt(today: date) -> str:
+def build_filter_json_schema(currencies: list[str]) -> dict:
+    """The response schema, built per request so the currency enum reflects
+    what this user actually holds.
+
+    Hand-written rather than generated from the Pydantic model so that
+    ``additionalProperties: false`` and the required-everything rule that
+    OpenAI strict mode demands are explicit and easy to read.
+    """
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "min_amount": {
+                "type": ["integer", "null"],
+                "description": "Minimum amount in minor units, inclusive.",
+            },
+            "max_amount": {
+                "type": ["integer", "null"],
+                "description": "Maximum amount in minor units, inclusive.",
+            },
+            "currency": {
+                "type": ["string", "null"],
+                "enum": list(currencies) + [None],
+            },
+            "tx_type": {
+                "type": ["string", "null"],
+                "enum": TRANSACTION_TYPES + [None],
+            },
+            "period": {
+                "type": ["string", "null"],
+                "enum": RELATIVE_PERIODS + [None],
+                "description": (
+                    "A relative time window, by name. Use this for anything "
+                    "relative - never compute a date yourself."
+                ),
+            },
+            "date_from": {
+                "type": ["string", "null"],
+                "description": (
+                    "Only for a date the user stated literally, as YYYY-MM-DD. "
+                    "Leave null whenever period is set."
+                ),
+            },
+            "date_to": {
+                "type": ["string", "null"],
+                "description": "As date_from, inclusive.",
+            },
+            "understood": {
+                "type": "boolean",
+                "description": "False if the query is not a transaction filter at all.",
+            },
+        },
+        "required": [
+            "min_amount",
+            "max_amount",
+            "currency",
+            "tx_type",
+            "period",
+            "date_from",
+            "date_to",
+            "understood",
+        ],
+    }
+
+
+def build_prompt(currencies: list[str]) -> str:
     return f"""You translate a user's plain-English request into a transaction filter.
 
-Today's date is {today.isoformat()} (UTC). Resolve every relative date against it.
-- "last week" / "the past week" means the 7 days ending today.
-- "this month" means the 1st of the current month through today.
-- "yesterday" is a single day: date_from and date_to are both that date.
+Never compute a date. For any relative time expression, set "period" to one of:
+  today, yesterday, last_7_days, last_30_days, last_calendar_week,
+  this_month, last_month, this_year
+"last week", "the past week" and "in the last 7 days" all mean last_7_days.
+Use last_calendar_week only when the user clearly means the previous Monday-to-
+Sunday week. Use date_from / date_to only for a date the user spelled out
+("since 1 March", "between 2025-01-01 and 2025-01-31"), and leave them null
+whenever period is set.
 
 Amounts are integers in MINOR UNITS: 2500 means $25.00, 100 means $1.00.
 So "payments over $50" is min_amount 5000, and "under 10 euros" is max_amount 1000.
 
-Available currencies: {", ".join(SUPPORTED_CURRENCIES)}. Map "dollars"/"$" to USD
-and "euros"/"EUR"/"€" to EUR. Leave currency null if the user did not say one.
+Currencies held by this user: {", ".join(currencies)}. Map "dollars"/"$" to USD
+and "euros"/"EUR"/"€" to EUR. Leave currency null if the user did not say one,
+or named a currency that is not in that list.
 
 Transaction types: "top_up" is money coming in (top up, deposit, added funds),
 "payment" is money going out (payment, spend, charge, purchase).
@@ -96,11 +124,45 @@ all - random characters, an unrelated question, or something this filter cannot
 express. When understood is false leave every other field null."""
 
 
+def resolve_period(period: str, today: date) -> tuple[date, date]:
+    """Turn a relative label into an inclusive ``(date_from, date_to)`` range.
+
+    Pure and deterministic - this is the whole point of taking the arithmetic
+    away from the model.
+    """
+    if period == "today":
+        return today, today
+    if period == "yesterday":
+        d = today - timedelta(days=1)
+        return d, d
+    if period == "last_7_days":
+        # The 7 days ending today, today included.
+        return today - timedelta(days=6), today
+    if period == "last_30_days":
+        return today - timedelta(days=29), today
+    if period == "last_calendar_week":
+        # Monday of the week before the one containing today, through Sunday.
+        this_monday = today - timedelta(days=today.weekday())
+        last_monday = this_monday - timedelta(days=7)
+        return last_monday, last_monday + timedelta(days=6)
+    if period == "this_month":
+        return today.replace(day=1), today
+    if period == "last_month":
+        first_of_this = today.replace(day=1)
+        last_of_prev = first_of_this - timedelta(days=1)
+        return last_of_prev.replace(day=1), last_of_prev
+    if period == "this_year":
+        return date(today.year, 1, 1), today
+    raise ValueError(f"unknown period {period!r}")  # unreachable: Literal-validated
+
+
 def _empty_filter(understood: bool = True) -> SearchFilter:
     return SearchFilter(understood=understood)
 
 
-async def parse_query(query: str, today: date | None = None) -> SearchFilter:
+async def parse_query(
+    query: str, currencies: list[str], today: date | None = None
+) -> SearchFilter:
     """Turn a natural-language query into a validated filter.
 
     Never raises. Anything that goes wrong - no API key, a timeout, a network
@@ -125,7 +187,7 @@ async def parse_query(query: str, today: date | None = None) -> SearchFilter:
             model=OPENAI_MODEL,
             temperature=0,
             messages=[
-                {"role": "system", "content": build_prompt(today)},
+                {"role": "system", "content": build_prompt(currencies)},
                 {"role": "user", "content": query},
             ],
             response_format={
@@ -133,7 +195,7 @@ async def parse_query(query: str, today: date | None = None) -> SearchFilter:
                 "json_schema": {
                     "name": "search_filter",
                     "strict": True,
-                    "schema": FILTER_JSON_SCHEMA,
+                    "schema": build_filter_json_schema(currencies),
                 },
             },
         )
@@ -145,6 +207,11 @@ async def parse_query(query: str, today: date | None = None) -> SearchFilter:
 
     if not parsed.understood:
         return _empty_filter(understood=False)
+
+    if parsed.period is not None:
+        # The label wins over anything the model may also have put in the date
+        # fields, and the range it produces is ours, not the model's.
+        parsed.date_from, parsed.date_to = resolve_period(parsed.period, today)
 
     # A filter with nothing in it means the model understood the words but
     # produced no constraint. Treat it as not understood so the user gets the
@@ -158,7 +225,14 @@ async def parse_query(query: str, today: date | None = None) -> SearchFilter:
 def _has_constraint(f: SearchFilter) -> bool:
     return any(
         v is not None
-        for v in (f.min_amount, f.max_amount, f.currency, f.tx_type, f.date_from, f.date_to)
+        for v in (
+            f.min_amount,
+            f.max_amount,
+            f.currency,
+            f.tx_type,
+            f.date_from,
+            f.date_to,
+        )
     )
 
 
