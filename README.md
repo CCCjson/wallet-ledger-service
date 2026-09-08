@@ -4,8 +4,8 @@ A wallet service that ingests signed payment webhooks into an idempotent ledger,
 and a page that lets you search the resulting history in plain English.
 
 - **Live demo:** _<frontend URL>_
-- **API:** _<backend URL>_
-- **Repo:** _<repo URL>_
+- **API:** https://daely-wallet.onrender.com
+- **Repo:** https://github.com/CCCjson/daely-wallet
 
 > ⚠️ The API runs on Render's free tier, which sleeps when idle. **The first
 > request after a period of inactivity takes about 50 seconds** while the
@@ -33,6 +33,13 @@ cd frontend && cp .env.example .env.local && npm install && npm run dev
 The seed script writes twelve transactions for `u_123` across USD and EUR,
 spread over the last three weeks, so the example searches have something
 meaningful to narrow down.
+
+The hosted demo sets `SEED_ON_STARTUP=true` and reseeds itself on boot, since
+Render's free tier has no shell to run the script from and its free Postgres can
+be recreated. That is safe because seeding is idempotent: rows conflict on
+`event_id` and are skipped, and balances are recomputed from the ledger rather
+than incremented, so a restart cannot double anything or discard events received
+in the meantime. The flag is off by default and unused locally.
 
 ---
 
@@ -188,13 +195,13 @@ no FX conversion. Beyond that:
 
 ## Try it
 
-Against the live API (replace the host), or `http://localhost:8000` locally:
+Against the live API, or swap the host for `http://localhost:8000` locally:
 
 ```bash
 BODY='{"event_id":"evt_demo_1","user_id":"u_123","amount":2500,"currency":"USD","type":"top_up"}'
 SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "whsec_test_secret" | awk '{print $2}')
 
-curl -X POST https://<api-host>/webhooks/payment \
+curl -X POST https://daely-wallet.onrender.com/webhooks/payment \
   -H "Content-Type: application/json" \
   -H "X-Signature: sha256=$SIG" \
   -d "$BODY"
@@ -207,13 +214,13 @@ digest and the signature will not match.
 Check the balance moved:
 
 ```bash
-curl -s "https://<api-host>/wallets/u_123" | python3 -m json.tool
+curl -s "https://daely-wallet.onrender.com/wallets/u_123" | python3 -m json.tool
 ```
 
 **Send the same event ten times, concurrently:**
 
 ```bash
-seq 1 10 | xargs -P 10 -I{} curl -s -X POST https://<api-host>/webhooks/payment \
+seq 1 10 | xargs -P 10 -I{} curl -s -X POST https://daely-wallet.onrender.com/webhooks/payment \
   -H "Content-Type: application/json" -H "X-Signature: sha256=$SIG" -d "$BODY"
 ```
 
@@ -224,21 +231,21 @@ Signature checks:
 
 ```bash
 # tampered body -> 401
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<api-host>/webhooks/payment \
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://daely-wallet.onrender.com/webhooks/payment \
   -H "X-Signature: sha256=$SIG" \
   -d '{"event_id":"evt_x","user_id":"u_123","amount":999999,"currency":"USD","type":"top_up"}'
 
 # no signature -> 401
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<api-host>/webhooks/payment -d "$BODY"
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://daely-wallet.onrender.com/webhooks/payment -d "$BODY"
 ```
 
 Search:
 
 ```bash
-curl -s -G --data-urlencode 'q=payments over $50'      "https://<api-host>/wallets/u_123"
-curl -s -G --data-urlencode 'q=anything from last week' "https://<api-host>/wallets/u_123"
-curl -s -G --data-urlencode 'q=top ups in euros'        "https://<api-host>/wallets/u_123"
-curl -s -G --data-urlencode 'q=asdfgh'                  "https://<api-host>/wallets/u_123"
+curl -s -G --data-urlencode 'q=payments over $50'      "https://daely-wallet.onrender.com/wallets/u_123"
+curl -s -G --data-urlencode 'q=anything from last week' "https://daely-wallet.onrender.com/wallets/u_123"
+curl -s -G --data-urlencode 'q=top ups in euros'        "https://daely-wallet.onrender.com/wallets/u_123"
+curl -s -G --data-urlencode 'q=asdfgh'                  "https://daely-wallet.onrender.com/wallets/u_123"
 ```
 
 ---

@@ -28,6 +28,15 @@ DATABASE_URL = _normalise_database_url(
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "whsec_test_secret")
 
+# Deployment convenience: Render's free tier has no shell to run the seed
+# script from, and its free Postgres can be recreated. Seeding is idempotent,
+# so the demo instance simply reseeds itself on boot. Off by default.
+SEED_ON_STARTUP = os.environ.get("SEED_ON_STARTUP", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 

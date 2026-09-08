@@ -8,10 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from app import repository
-from app.config import CORS_ORIGINS
+from app.config import CORS_ORIGINS, SEED_ON_STARTUP
 from app.db import create_pool, init_db
 from app.models import PaymentEvent, WalletResponse
 from app.search import parse_query
+from app.seed import seed, summary
 from app.security import verify_signature
 
 logging.basicConfig(level=logging.INFO)
@@ -21,6 +22,12 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     app.state.pool = await create_pool()
     await init_db(app.state.pool)
+    if SEED_ON_STARTUP:
+        # Idempotent: existing rows conflict on event_id and are skipped, and
+        # balances are recomputed from the ledger, so a restart cannot double
+        # anything or clobber events received in the meantime.
+        await seed(app.state.pool)
+        logging.getLogger(__name__).info("seeded: %s", await summary(app.state.pool))
     yield
     await app.state.pool.close()
 

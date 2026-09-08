@@ -24,5 +24,7 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false          # set to the deployed frontend origin
+      - key: SEED_ON_STARTUP
+        value: "true"       # free tier has no shell; seeding is idempotent
       - key: PYTHON_VERSION
         value: "3.13.4"
