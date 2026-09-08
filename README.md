@@ -35,6 +35,14 @@ The seed script writes twelve transactions for `u_123` across USD and EUR,
 spread over the last three weeks, so the example searches have something
 meaningful to narrow down.
 
+`scripts/reset_demo.py` is the counterpart: it deletes every transaction that is
+not seed data and rebuilds the balances from what remains, which is how the
+shared demo gets tidied up after people have finished poking events at it.
+
+```bash
+DATABASE_URL='<the deployment's database url>' uv run python scripts/reset_demo.py
+```
+
 The hosted demo sets `SEED_ON_STARTUP=true` and reseeds itself on boot, since
 Render's free tier has no shell to run the script from and its free Postgres can
 be recreated. That is safe because seeding is idempotent: rows conflict on
