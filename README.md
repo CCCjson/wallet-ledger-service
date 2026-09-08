@@ -3,14 +3,15 @@
 A wallet service that ingests signed payment webhooks into an idempotent ledger,
 and a page that lets you search the resulting history in plain English.
 
-- **Live demo:** _<frontend URL>_
+- **Live demo:** https://daely-wallet.vercel.app
 - **API:** https://daely-wallet.onrender.com
 - **Repo:** https://github.com/CCCjson/daely-wallet
 
 > ⚠️ The API runs on Render's free tier, which sleeps when idle. **The first
 > request after a period of inactivity takes about 50 seconds** while the
-> instance wakes up. Subsequent requests are fast. If the demo page looks stuck
-> on first load, that is what is happening.
+> instance wakes up. Everything after that is quick: an unfiltered wallet read
+> is around 80ms, and a search is 1.5-3s because it makes an LLM round trip.
+> If the demo page looks stuck on first load, that is the instance waking up.
 
 ---
 
