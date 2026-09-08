@@ -88,6 +88,10 @@ export default function WalletView({ userId }: { userId: string }) {
       <input
         type="search"
         value={query}
+        // Matches MAX_QUERY_LENGTH on the API, which rejects anything longer
+        // with a 422. Stopping it at the keystroke means the user never sees a
+        // failed request for something the browser could simply not allow.
+        maxLength={200}
         placeholder="Search, e.g. payments over $50"
         aria-label="Search transactions"
         onChange={(e) => setQuery(e.target.value)}
