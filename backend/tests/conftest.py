@@ -11,7 +11,7 @@ import os
 _ADMIN_URL = os.environ.get(
     "TEST_ADMIN_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres"
 )
-_TEST_DB = "daely_test"
+_TEST_DB = "wallet_test"
 os.environ["DATABASE_URL"] = _ADMIN_URL.rsplit("/", 1)[0] + f"/{_TEST_DB}"
 os.environ.setdefault("WEBHOOK_SECRET", "whsec_test_secret")
 

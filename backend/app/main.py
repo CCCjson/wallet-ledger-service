@@ -1,4 +1,4 @@
-"""Daely wallet API."""
+"""Wallet ledger API."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     await app.state.pool.close()
 
 
-app = FastAPI(title="Daely Wallet API", lifespan=lifespan)
+app = FastAPI(title="Wallet Ledger API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

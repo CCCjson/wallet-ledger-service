@@ -23,7 +23,7 @@ def _normalise_database_url(url: str) -> str:
 
 
 DATABASE_URL = _normalise_database_url(
-    os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/daely")
+    os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/wallet")
 )
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "whsec_test_secret")

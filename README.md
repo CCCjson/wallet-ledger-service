@@ -1,11 +1,11 @@
-# Daely Wallet
+# Wallet Ledger Service
 
 A wallet service that ingests signed payment webhooks into an idempotent ledger,
 and a page that lets you search the resulting history in plain English.
 
 - **Live demo:** https://daely-wallet.vercel.app
 - **API:** https://daely-wallet.onrender.com
-- **Repo:** https://github.com/CCCjson/daely-wallet
+- **Repo:** https://github.com/CCCjson/wallet-ledger-service
 
 > ⚠️ The API runs on Render's free tier, which sleeps when idle. **The first
 > request after a period of inactivity takes about 50 seconds** while the
@@ -19,8 +19,8 @@ and a page that lets you search the resulting history in plain English.
 
 ```bash
 # 1. Database
-docker run -d --name daely-pg -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=daely -p 5432:5432 postgres:17
+docker run -d --name wallet-pg -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wallet -p 5432:5432 postgres:17
 
 # 2. API  (http://localhost:8000)
 cd backend && cp .env.example .env && uv sync
@@ -381,7 +381,7 @@ curl -s -G --data-urlencode 'q=asdfgh'                  "https://daely-wallet.on
 cd backend && uv run pytest -v
 ```
 
-They run against a real Postgres (`daely_test`, created automatically). That is
+They run against a real Postgres (`wallet_test`, created automatically). That is
 deliberate: the property under test — two concurrent inserts serialising on a
 unique index — belongs to the database, so a mock or SQLite would be testing
 nothing. `test_ten_concurrent_deliveries_of_one_event_apply_once` fires ten

@@ -1,7 +1,7 @@
 [project]
-name = "daely-wallet-backend"
+name = "wallet-ledger-backend"
 version = "0.1.0"
-description = "Daely wallet task - webhook ingestion, idempotent ledger, natural language search"
+description = "Wallet service - webhook ingestion, idempotent ledger, natural language search"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
